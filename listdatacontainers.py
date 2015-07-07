@@ -76,6 +76,12 @@ def container_uses_default_command(startargs, configargs):
     # startargs is either equal to configargs or equal to configargs without element at pos 0
     return configargs[configargs.index(startargs[0]):] == startargs if len(startargs)>=1 else True
 
+def create_container_exists_for_name(containerimport, newContainer):
+    for item in containerimport:
+        if isinstance(item, list) and isinstance(newContainer, list) and item[0:2] == newContainer[0:2]:
+            return True
+    return False
+
 #for c in cli.containers(filters={'status':'running'}):
 for c in cli.containers(all=True, filters={}):
     cid=c.get('Id')
@@ -90,12 +96,11 @@ for c in cli.containers(all=True, filters={}):
     portbindings = ci.get('HostConfig').get('PortBindings')
     hostlinks = ci.get('HostConfig').get('Links')
     logger.debug(pprint.pformat(ci))
-    containersdict[name]={'export':[],'import':[]}
-    containerimport = containersdict.get(name).get('import')
-    containerexport = containersdict.get(name).get('export')
-    containerexport.append("docker export {name} >{tarname}.export.tar".format(name=name, imagename=imagename, tarname=os.path.join(exportpath,name)))
-    containerexport.append("docker save {imagename} >{tarname}.tar".format(name=name, imagename=imagename, tarname=os.path.join(exportpath,name)))
-    containerimport.append("docker load <{tarname}.tar".format(name=name,tarname=os.path.join(exportpath,name)))
+    containerimport = containersdict.setdefault(name, {}).setdefault('import', [])
+    containerexport = containersdict.setdefault(name, {}).setdefault('export', [])
+    containerexport[0:0]=["docker export {name} >{tarname}.export.tar".format(name=name, imagename=imagename, tarname=os.path.join(exportpath,name))]
+    containerexport[0:0]=["docker save {imagename} >{tarname}.tar".format(name=name, imagename=imagename, tarname=os.path.join(exportpath,name))]
+    containerimport[0:0]=["docker load <{tarname}.tar".format(name=name,tarname=os.path.join(exportpath,name))]
     if volumesfrom:
         vfrom=','.join(volumesfrom)
         logger.info("container [{name}] (id:{Id}) has volumes from [{vfrom}]".format(name=name, Id=cid[0:10], vfrom=vfrom))
@@ -104,9 +109,11 @@ for c in cli.containers(all=True, filters={}):
             for volname,volpath in volumesinfo(datavolname).items():
                 volumestobackup.append(volname)
                 logger.info( "   volume [{volname}] with path [{volpath}]".format(volname=volname, volpath=volpath))
-            containerimport.append(data_volume_create_container_command(name,imagename,datavolname))
-            containerexport.append(data_volume_tar_command(datavolname, imagename, volumestobackup))
-            containerimport.append(data_volume_tar_command(datavolname, imagename, [], 'xf'))
+            dvimport = containersdict.setdefault(datavolname, {}).setdefault('import', [])
+            dvexport = containersdict.setdefault(datavolname, {}).setdefault('export', [])
+            dvimport.append(data_volume_create_container_command(name,imagename,datavolname))
+            dvexport.append(data_volume_tar_command(datavolname, imagename, volumestobackup))
+            dvimport.append(data_volume_tar_command(datavolname, imagename, [], 'xf'))
     stillToBindVolumes=[]
     if bindvolumes:
         bfrom=','.join(bindvolumes)
@@ -121,10 +128,14 @@ for c in cli.containers(all=True, filters={}):
             logger.info( "   hostvolume [{volname}] localpath [{volpath}]".format(volname=hostvolume, volpath=localvolume))
             datavolname=name+'-data'
             volumesfrom.append(datavolname)
-            containerimport.append(data_volume_create_container_command(name,imagename,datavolname))
-            containerexport.append(bind_volume_tar_command(datavolname, hostvolume, localvolume, imagename, [localvolume]))
-            containerimport.append(bind_volume_tar_command(datavolname, None, localvolume, imagename, [], 'xf'))
-    containerimport.append(create_container_command(name, imagename, volumesfrom, startargs if not container_uses_default_command(startargs, configargs) else [], portbindings, configenv, hostlinks, stillToBindVolumes))
+            dvimport = containersdict.setdefault(datavolname, {}).setdefault('import', [])
+            dvexport = containersdict.setdefault(datavolname, {}).setdefault('export', [])
+            dvimport.append(data_volume_create_container_command(name,imagename,datavolname))
+            dvexport.append(bind_volume_tar_command(datavolname, hostvolume, localvolume, imagename, [localvolume]))
+            dvimport.append(bind_volume_tar_command(datavolname, None, localvolume, imagename, [], 'xf'))
+    newContainer=create_container_command(name, imagename, volumesfrom, startargs if not container_uses_default_command(startargs, configargs) else [], portbindings, configenv, hostlinks, stillToBindVolumes)
+    if not create_container_exists_for_name(containerimport, newContainer):
+        containerimport.append(newContainer)
 
 def printItemOrList(item):
     if isinstance(item, list):
