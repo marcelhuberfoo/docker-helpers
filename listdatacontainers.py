@@ -66,8 +66,11 @@ def create_container_links(hostlinks):
         hostlinkslist.append('--link '+container+':'+alias)
     return hostlinkslist
 
+def create_env_list(envvalues):
+    return ['--env "'+value+'"' for value in envvalues] if envvalues else []
+
 def create_container_command(name, imagename, volumesfrom, startcommand=[], portbindings={}, configenv=[], hostlinks=[], stillToBindVolumes=[]):
-    return create_format_string_list(['docker create', '--name {name}']+create_bind_volume_list(stillToBindVolumes)+volumes_from_list(volumesfrom)+['--env '+value for value in configenv]+create_portbind_list(portbindings)+create_container_links(hostlinks)+['{imagename}', '{startcommand}'], name=name,imagename=imagename,startcommand=' '.join(startcommand))
+    return create_format_string_list(['docker create', '--name {name}']+create_bind_volume_list(stillToBindVolumes)+volumes_from_list(volumesfrom)+create_env_list(configenv)+create_portbind_list(portbindings)+create_container_links(hostlinks)+['{imagename}', '{startcommand}'], name=name,imagename=imagename,startcommand=' '.join(startcommand))
 
 def data_volume_create_container_command(name, imagename, datavolname):
     return create_format_string_list(['docker create', '--name {volfrom}', '--net none', '--entrypoint /bin/echo', '{imagename}', 'Data-only container for {name}'], name=name, imagename=imagename, volfrom=datavolname)
