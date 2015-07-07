@@ -51,7 +51,7 @@ def create_portbind_list(portbindings):
         if hostip:
             hostip+=':'
         hostport=firstentry.get('HostPort', None)
-        portmap.append('-p {hostip}{hostport}:{port}'.format(port=portonly, hostip=hostip, hostport=hostport))
+        portmap.append('--publish {hostip}{hostport}:{port}'.format(port=portonly, hostip=hostip, hostport=hostport))
     return portmap
 
 def create_container_links(hostlinks):
