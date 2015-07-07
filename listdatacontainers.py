@@ -75,9 +75,14 @@ def create_container_command(name, imagename, volumesfrom, startcommand=[], port
 def data_volume_create_container_command(name, imagename, datavolname):
     return create_format_string_list(['docker create', '--name {volfrom}', '--net none', '--entrypoint /bin/echo', '{imagename}', 'Data-only container for {name}'], name=name, imagename=imagename, volfrom=datavolname)
 
-def container_uses_default_command(startargs, configargs):
-    # startargs is either equal to configargs or equal to configargs without element at pos 0
-    return configargs[configargs.index(startargs[0]):] == startargs if len(startargs)>=1 else True
+def container_uses_default_command(startargs, imagecmd):
+    # startargs is either equal to imagecmd or equal to imagecmd without element at pos 0
+    try:
+        return imagecmd[imagecmd.index(startargs[0]):] == startargs
+    except ValueError as e:
+        return False
+    except IndexError as e:
+        return False
 
 def create_container_exists_for_name(containerimport, newContainer):
     for item in containerimport:
@@ -88,11 +93,13 @@ def create_container_exists_for_name(containerimport, newContainer):
 #for c in cli.containers(filters={'status':'running'}):
 for c in cli.containers(all=True, filters={}):
     cid=c.get('Id')
+    image_id=c.get('Image')
     ci=cli.inspect_container(cid)
+    image_info=cli.inspect_image(image_id)
     name=ci.get('Name').lstrip('/')
     imagename=ci.get('Config').get('Image')
     startargs = ci.get('Args')
-    configargs = ci.get('Config').get('Cmd')
+    imagecmd = image_info.get('Config').get('Cmd')
     configenv = ci.get('Config').get('Env')
     volumesfrom = ci.get('HostConfig').get('VolumesFrom')
     bindvolumes = ci.get('HostConfig').get('Binds')
@@ -136,7 +143,7 @@ for c in cli.containers(all=True, filters={}):
             dvimport.append(data_volume_create_container_command(name,imagename,datavolname))
             dvexport.append(bind_volume_tar_command(datavolname, hostvolume, localvolume, imagename, [localvolume]))
             dvimport.append(bind_volume_tar_command(datavolname, None, localvolume, imagename, [], 'xf'))
-    newContainer=create_container_command(name, imagename, volumesfrom, startargs if not container_uses_default_command(startargs, configargs) else [], portbindings, configenv, hostlinks, stillToBindVolumes)
+    newContainer=create_container_command(name, imagename, volumesfrom, startargs if not container_uses_default_command(startargs, imagecmd) else [], portbindings, configenv, hostlinks, stillToBindVolumes)
     if not create_container_exists_for_name(containerimport, newContainer):
         containerimport.append(newContainer)
 
