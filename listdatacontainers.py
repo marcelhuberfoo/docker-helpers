@@ -14,6 +14,7 @@ cli = Client(base_url='unix://var/run/docker.sock', timeout=120)
 
 exportpath=os.path.sep+'tmp'
 containersdict = {}
+imagenamemap = {}
 
 def volumesinfo(container_id):
     ci=cli.inspect_container(container_id)
@@ -109,8 +110,7 @@ for c in cli.containers(all=True, filters={}):
     containerimport = containersdict.setdefault(name, {}).setdefault('import', [])
     containerexport = containersdict.setdefault(name, {}).setdefault('export', [])
     containerexport[0:0]=["docker export {name} >{tarname}.export.tar".format(name=name, imagename=imagename, tarname=os.path.join(exportpath,name))]
-    containerexport[0:0]=["docker save {imagename} >{tarname}.tar".format(name=name, imagename=imagename, tarname=os.path.join(exportpath,name))]
-    containerimport[0:0]=["docker load <{tarname}.tar".format(name=name,tarname=os.path.join(exportpath,name))]
+    imagenamemap.setdefault(imagename, []).append(name)
     if volumesfrom:
         vfrom=','.join(volumesfrom)
         logger.info("container [{name}] (id:{Id}) has volumes from [{vfrom}]".format(name=name, Id=cid[0:10], vfrom=vfrom))
@@ -147,11 +147,21 @@ for c in cli.containers(all=True, filters={}):
     if not create_container_exists_for_name(containerimport, newContainer):
         containerimport.append(newContainer)
 
+for (imagename, names) in imagenamemap.items():
+    name = names[0]
+    containerimport = containersdict.setdefault(name, {}).setdefault('import', [])
+    containerexport = containersdict.setdefault(name, {}).setdefault('export', [])
+    tarimagefilename = os.path.join(exportpath,name)+'.image'
+    containerexport[0:0]=["docker save {imagename} >{tarname}.tar".format(name=name, imagename=imagename, tarname=tarimagefilename)]
+    containerimport[0:0]=["docker load <{tarname}.tar".format(name=name,tarname=tarimagefilename)]
+
 def printItemOrList(item):
     if isinstance(item, list):
         print(' \\\n\t'.join(item))
     else:
         print(item)
+
+logger.debug(pprint.pformat(imagenamemap))
 
 count=0
 for (name, imex) in containersdict.items():
