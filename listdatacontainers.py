@@ -14,6 +14,7 @@ cli = Client(base_url='unix://var/run/docker.sock', timeout=120)
 
 exportpath=os.path.sep+'tmp'
 containersdict = {}
+containerdeps = {}
 imagenamemap = {}
 
 def volumesinfo(container_id):
@@ -55,7 +56,7 @@ def create_portbind_list(portbindings):
         portmap.append('--publish {hostip}{hostport}:{port}'.format(port=portonly, hostip=hostip, hostport=hostport))
     return portmap
 
-def create_container_links(hostlinks):
+def create_container_links(using_container, hostlinks):
     import os.path
     if not hostlinks:
         return []
@@ -65,13 +66,14 @@ def create_container_links(hostlinks):
         container = os.path.basename(container_raw)
         alias = os.path.basename(alias_raw)
         hostlinkslist.append('--link '+container+':'+alias)
+        add_container_dep(using_container, container)
     return hostlinkslist
 
 def create_env_list(envvalues):
     return ['--env "'+value+'"' for value in envvalues] if envvalues else []
 
 def create_container_command(name, imagename, volumesfrom, startcommand=[], portbindings={}, configenv=[], hostlinks=[], stillToBindVolumes=[]):
-    return create_format_string_list(['docker create', '--name {name}']+create_bind_volume_list(stillToBindVolumes)+volumes_from_list(volumesfrom)+create_env_list(configenv)+create_portbind_list(portbindings)+create_container_links(hostlinks)+['{imagename}', '{startcommand}'], name=name,imagename=imagename,startcommand=' '.join(startcommand))
+    return create_format_string_list(['docker create', '--name {name}']+create_bind_volume_list(stillToBindVolumes)+volumes_from_list(volumesfrom)+create_env_list(configenv)+create_portbind_list(portbindings)+create_container_links(name, hostlinks)+['{imagename}', '{startcommand}'], name=name,imagename=imagename,startcommand=' '.join(startcommand))
 
 def data_volume_create_container_command(name, imagename, datavolname):
     return create_format_string_list(['docker create', '--name {volfrom}', '--net none', '--entrypoint /bin/echo', '{imagename}', 'Data-only container for {name}'], name=name, imagename=imagename, volfrom=datavolname)
@@ -90,6 +92,10 @@ def create_container_exists_for_name(containerimport, newContainer):
         if isinstance(item, list) and isinstance(newContainer, list) and item[0:2] == newContainer[0:2]:
             return True
     return False
+
+def add_container_dep(container, dependency):
+    if not containerdeps.has_key(container) or not dependency in containerdeps.get(container):
+        containerdeps.setdefault(container, []).append(dependency)
 
 #for c in cli.containers(filters={'status':'running'}):
 for c in cli.containers(all=True, filters={}):
@@ -111,6 +117,7 @@ for c in cli.containers(all=True, filters={}):
     containerexport = containersdict.setdefault(name, {}).setdefault('export', [])
     containerexport[0:0]=["docker export {name} >{tarname}.export.tar".format(name=name, imagename=imagename, tarname=os.path.join(exportpath,name))]
     imagenamemap.setdefault(imagename, []).append(name)
+    add_container_dep(name, imagename)
     if volumesfrom:
         vfrom=','.join(volumesfrom)
         logger.info("container [{name}] (id:{Id}) has volumes from [{vfrom}]".format(name=name, Id=cid[0:10], vfrom=vfrom))
@@ -124,6 +131,8 @@ for c in cli.containers(all=True, filters={}):
             dvimport.append(data_volume_create_container_command(name,imagename,datavolname))
             dvexport.append(data_volume_tar_command(datavolname, imagename, volumestobackup))
             dvimport.append(data_volume_tar_command(datavolname, imagename, [], 'xf'))
+            add_container_dep(name, datavolname)
+            add_container_dep(datavolname, imagename)
     stillToBindVolumes=[]
     if bindvolumes:
         bfrom=','.join(bindvolumes)
@@ -143,17 +152,11 @@ for c in cli.containers(all=True, filters={}):
             dvimport.append(data_volume_create_container_command(name,imagename,datavolname))
             dvexport.append(bind_volume_tar_command(datavolname, hostvolume, localvolume, imagename, [localvolume]))
             dvimport.append(bind_volume_tar_command(datavolname, None, localvolume, imagename, [], 'xf'))
+            add_container_dep(name, datavolname)
+            add_container_dep(datavolname, imagename)
     newContainer=create_container_command(name, imagename, volumesfrom, startargs if not container_uses_default_command(startargs, imagecmd) else [], portbindings, configenv, hostlinks, stillToBindVolumes)
     if not create_container_exists_for_name(containerimport, newContainer):
         containerimport.append(newContainer)
-
-for (imagename, names) in imagenamemap.items():
-    name = names[0]
-    containerimport = containersdict.setdefault(name, {}).setdefault('import', [])
-    containerexport = containersdict.setdefault(name, {}).setdefault('export', [])
-    tarimagefilename = os.path.join(exportpath,name)+'.image'
-    containerexport[0:0]=["docker save {imagename} >{tarname}.tar".format(name=name, imagename=imagename, tarname=tarimagefilename)]
-    containerimport[0:0]=["docker load <{tarname}.tar".format(name=name,tarname=tarimagefilename)]
 
 def printItemOrList(item):
     if isinstance(item, list):
@@ -161,18 +164,48 @@ def printItemOrList(item):
     else:
         print(item)
 
-logger.debug(pprint.pformat(imagenamemap))
+logger.debug('Map of images to containers\n'+pprint.pformat(imagenamemap))
+logger.info('Container dependencies\n'+pprint.pformat(containerdeps))
 
-count=0
-for (name, imex) in containersdict.items():
-    print('{:#^50}'.format(' {count:>2}: {name} '.format(name=name, count=count)))
-    print('#{:-^48}#'.format('Export'))
-    for item in imex.get('export', []):
+def get_imex_lines(imagename):
+    firstcontainername = imagenamemap.get(imagename, [])[0]
+    imex_dict={}
+    containerimport = imex_dict.setdefault('import', [])
+    containerexport = imex_dict.setdefault('export', [])
+    tarimagefilename = os.path.join(exportpath,firstcontainername)+'.image'
+    containerexport[0:0]=["docker save {imagename} >{tarname}.tar".format(name=firstcontainername, imagename=imagename, tarname=tarimagefilename)]
+    containerimport[0:0]=["docker load <{tarname}.tar".format(name=firstcontainername,tarname=tarimagefilename)]
+    return imex_dict
+    
+def print_imex_items(imex):
+    for item in imex:
         printItemOrList(item)
-    print('\n#{:-^48}#'.format('Import'))
-    for item in imex.get('import', []):
-        printItemOrList(item)
-    print('#{:^48}#'.format(''))
-    print('{:#^50}'.format(''))
-    count+=1
+
+def print_toposorted_export_import(name, containersdone, print_export=True, print_import=True):
+    if not name or name in containersdone:
+        return 
+    logger.info('current item [{0}]'.format(name))
+    for depend in containerdeps.get(name, []):
+        print_toposorted_export_import(depend, containersdone, print_export, print_import)
+    containersdone.append(name)
+    imex = containersdict.get(name)
+    label_prefix=''
+    if not imex:
+        # name is an image, create commands on the fly
+        imex = get_imex_lines(name)
+        label_prefix='Image '
+    if print_export:
+        print('\n{:#^80}'.format(' {count:>2}: {name} {label} '.format(name=name, count=len(containersdone), label=label_prefix+'Export')))
+        print_imex_items(imex.get('export', []))
+    if print_import:
+        print('\n{:#^80}'.format(' {count:>2}: {name} {label} '.format(name=name, count=len(containersdone), label=label_prefix+'Import')))
+        print_imex_items(imex.get('import', []))
+
+containerdone=[]
+for name in containerdeps.keys():
+    print_toposorted_export_import(name, containerdone, True, False)
+
+containerdone=[]
+for name in containerdeps.keys():
+    print_toposorted_export_import(name, containerdone, False, True)
 
