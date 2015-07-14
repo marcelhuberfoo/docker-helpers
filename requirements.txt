@@ -1,1 +1,2 @@
 docker-py==1.3.0
+PyYAML==3.11
