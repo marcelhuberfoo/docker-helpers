@@ -46,6 +46,8 @@ def bind_volume_tar_command(datavolname, hostvolume, localvolume, imagename, bac
 
 def create_portbind_list(portbindings):
     portmap=[]
+    if not portbindings:
+        return portmap
     for (localport, hostmap) in portbindings.items():
         portonly=localport.split('/')[0]
         firstentry=hostmap[0]
