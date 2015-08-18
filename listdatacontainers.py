@@ -1,4 +1,5 @@
 from docker import Client
+import docker.errors
 import pprint
 import os
 from logging import getLogger
@@ -82,6 +83,8 @@ def data_volume_create_container_command(name, imagename, datavolname):
 
 def container_uses_default_command(startargs, imagecmd):
     # startargs is either equal to imagecmd or equal to imagecmd without element at pos 0
+    if not imagecmd:
+        return True
     try:
         return imagecmd[imagecmd.index(startargs[0]):] == startargs
     except ValueError as e:
@@ -125,9 +128,12 @@ for c in cli.containers(all=True, filters={}):
         logger.info("container [{name}] (id:{Id}) has volumes from [{vfrom}]".format(name=name, Id=cid[0:10], vfrom=vfrom))
         for datavolname in volumesfrom:
             volumestobackup=[]
-            for volname,volpath in volumesinfo(datavolname).items():
-                volumestobackup.append(volname)
-                logger.info( "   volume [{volname}] with path [{volpath}]".format(volname=volname, volpath=volpath))
+            try:
+                for volname,volpath in volumesinfo(datavolname).items():
+                    volumestobackup.append(volname)
+                    logger.info( "   volume [{volname}] with path [{volpath}]".format(volname=volname, volpath=volpath))
+            except docker.errors.NotFound, e:
+                logger.warning('Container {0} has reference to volume {1} which does not exist anymore!'.format(name, datavolname))
             dvimport = containersdict.setdefault(datavolname, {}).setdefault('import', [])
             dvexport = containersdict.setdefault(datavolname, {}).setdefault('export', [])
             dvimport.append(data_volume_create_container_command(name,imagename,datavolname))
