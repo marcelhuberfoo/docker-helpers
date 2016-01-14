@@ -102,16 +102,25 @@ def add_container_dep(container, dependency):
     if not containerdeps.has_key(container) or not dependency in containerdeps.get(container):
         containerdeps.setdefault(container, []).append(dependency)
 
+def get_cmd_from_image(image_id, name, imagename):
+    imagecmd=None
+    try:
+        image_info=cli.inspect_image(image_id)
+        imagecmd = image_info.get('Config').get('Cmd')
+    except docker.errors.NotFound, e:
+        logger.warning('Container {0} references nonexisting Image {1} with name {2}!'.format(name, image_id, imagename))
+    return imagecmd
+
 #for c in cli.containers(filters={'status':'running'}):
 for c in cli.containers(all=True, filters={}):
+    logger.debug(pprint.pformat(c))
     cid=c.get('Id')
-    image_id=c.get('Image')
     ci=cli.inspect_container(cid)
-    image_info=cli.inspect_image(image_id)
+    image_id=ci.get('Image')
     name=ci.get('Name').lstrip('/')
     imagename=ci.get('Config').get('Image')
+    imagecmd=get_cmd_from_image(image_id, name, imagename)
     startargs = ci.get('Args')
-    imagecmd = image_info.get('Config').get('Cmd')
     configenv = ci.get('Config').get('Env')
     volumesfrom = ci.get('HostConfig').get('VolumesFrom')
     bindvolumes = ci.get('HostConfig').get('Binds')
@@ -120,7 +129,7 @@ for c in cli.containers(all=True, filters={}):
     logger.debug(pprint.pformat(ci))
     containerimport = containersdict.setdefault(name, {}).setdefault('import', [])
     containerexport = containersdict.setdefault(name, {}).setdefault('export', [])
-    containerexport[0:0]=["docker export {name} >{tarname}.export.tar".format(name=name, imagename=imagename, tarname=os.path.join(exportpath,name))]
+    containerexport[0:0]=["docker export {name} >{tarname}.export.tar".format(name=name, tarname=os.path.join(exportpath,name))]
     imagenamemap.setdefault(imagename, []).append(name)
     add_container_dep(name, imagename)
     if volumesfrom:
@@ -153,7 +162,7 @@ for c in cli.containers(all=True, filters={}):
             if hostvolume in [u'/var/run/docker.sock', '/tmp/.X11-unix']:
                 continue
             logger.info( "   hostvolume [{volname}] localpath [{volpath}]".format(volname=hostvolume, volpath=localvolume))
-            datavolname=name+'-data'
+            datavolname=name+'-data'+'_'.join(localvolume.split(os.sep))
             volumesfrom.append(datavolname)
             dvimport = containersdict.setdefault(datavolname, {}).setdefault('import', [])
             dvexport = containersdict.setdefault(datavolname, {}).setdefault('export', [])
